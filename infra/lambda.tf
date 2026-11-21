@@ -31,7 +31,7 @@ resource "aws_lambda_function" "api" {
   runtime          = "provided.al2023"
   architectures    = ["arm64"]
   timeout          = 30
-  memory_size      = 256
+  memory_size      = 512
   publish          = true
 
   environment {
@@ -59,7 +59,7 @@ resource "aws_lambda_function" "durable" {
   runtime          = "provided.al2023"
   architectures    = ["arm64"]
   timeout          = 60
-  memory_size      = 256
+  memory_size      = 512
   publish          = true
 
   durable_config {

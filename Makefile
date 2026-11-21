@@ -1,27 +1,23 @@
-.PHONY: test test-go build-lambda build-frontend local frontend-dev deploy fmt tidy
+.PHONY: test test-rust build-lambda build-frontend local frontend-dev deploy fmt
 
-GO ?= go
-export CGO_ENABLED=0
 export AWS_REGION ?= us-east-2
 
-test: test-go
+test: test-rust
 
-test-go:
-	cd backend && $(GO) test ./...
-
-tidy:
-	cd backend && $(GO) mod tidy
+test-rust:
+	cd backend && cargo test
 
 fmt:
-	cd backend && $(GO) fmt ./...
+	cd backend && cargo fmt
 
 build-lambda:
 	mkdir -p dist/api dist/durable
-	cd backend && GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w" -o ../dist/api/bootstrap ./cmd/api
-	cd backend && GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags="-s -w" -o ../dist/durable/bootstrap ./cmd/durable
+	cd backend && cargo lambda build --release --arm64 --bin api --bin durable
+	cp backend/target/lambda/api/bootstrap dist/api/bootstrap
+	cp backend/target/lambda/durable/bootstrap dist/durable/bootstrap
 
 local:
-	cd backend && $(GO) run ./cmd/api
+	cd backend && cargo run --bin api
 
 frontend-dev:
 	cd frontend && npm install && npm run dev
@@ -29,7 +25,7 @@ frontend-dev:
 build-frontend:
 	cd frontend && npm install && npm run build
 
-deploy: test-go build-lambda
+deploy: test-rust build-lambda
 	cd infra && tofu init -input=false
 	cd infra && tofu apply -input=false -auto-approve
 	$(MAKE) build-frontend

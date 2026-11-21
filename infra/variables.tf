@@ -13,7 +13,7 @@ variable "aws_region" {
 variable "project_name" {
   type        = string
   description = "Prefixo dos recursos. Sem dados de conta."
-  default     = "arena-store"
+  default     = "arena-rust"
 }
 
 variable "environment" {

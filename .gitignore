@@ -4,8 +4,12 @@ dist/
 bootstrap
 backend/bin/
 
-# Go
+# Go (leftover from the sibling demo)
 backend/vendor/
+
+# Rust
+backend/target/
+**/*.rs.bk
 
 # Node
 frontend/node_modules/

@@ -1,6 +1,8 @@
-# Arena Store — AWS Lambda Durable Functions (Go)
+# Arena Store — AWS Lambda Durable Functions (Rust)
 
-Projeto **de teste / demo pública**. Uma loja virtual fictícia de artigos esportivos que usa [AWS Lambda Durable Functions](https://docs.aws.amazon.com/lambda/latest/dg/durable-functions.html) em Go para orquestrar o **carrinho** (reserva de estoque + expiração) e o **pagamento** (PIX com QR de 15 minutos ou cartão de teste com atraso da operadora).
+Projeto **de teste / demo pública**. Uma loja virtual fictícia de artigos esportivos que usa [AWS Lambda Durable Functions](https://docs.aws.amazon.com/lambda/latest/dg/durable-functions.html) em Rust para orquestrar o **carrinho** (reserva de estoque + expiração) e o **pagamento** (PIX com QR de 15 minutos ou cartão de teste com atraso da operadora).
+
+É o irmão do demo em Go (`aws-lambda-durable-function-go`), portado para o [SDK oficial de Durable Execution em Rust](https://github.com/aws/aws-durable-execution-sdk-rust) (`aws-durable-execution-sdk` 1.0.0).
 
 Não é um produto real. Não processa pagamento de verdade. Não deve ir para produção com dados de clientes.
 
@@ -11,19 +13,19 @@ Cliente abre o site → escolhe produtos → reserva unidades no carrinho → en
 ```mermaid
 sequenceDiagram
   participant U as Navegador
-  participant API as Lambda API (Go)
+  participant API as Lambda API (Rust)
   participant D as Lambda Durable
   participant DB as DynamoDB
 
   U->>API: POST /api/cart/items
   API->>DB: reserva estoque (available → reserved)
   API->>D: Invoke Event (inicia execução)
-  D->>D: WaitForCallback checkout (timeout = CART_TTL)
+  D->>D: wait_for_callback checkout (timeout = CART_TTL)
   U->>API: POST /api/checkout (pix|card)
   API->>D: SendDurableExecutionCallbackSuccess
   alt PIX
     D->>DB: gera copia-e-cola + expira em 15 min
-    D->>D: WaitForCallback pix (timeout = PIX_TTL)
+    D->>D: wait_for_callback pix (timeout = PIX_TTL)
     U->>API: confirmar ou deixar expirar
     alt pago
       D->>DB: reserved → sold
@@ -40,12 +42,14 @@ Stack:
 
 | Camada | Tecnologia |
 | --- | --- |
-| Backend | Go 1.24+, [`aws-durable-execution-sdk-go`](https://github.com/aws/aws-durable-execution-sdk-go) |
-| API HTTP | Lambda `provided.al2023` + API Gateway HTTP API |
-| Orquestração | Lambda Durable Function (`durable.WaitForCallback`, `durable.Step`) |
+| Backend | Rust 1.94+, [`aws-durable-execution-sdk`](https://github.com/aws/aws-durable-execution-sdk-rust) |
+| API HTTP | Lambda `provided.al2023` arm64 + API Gateway HTTP API + Axum |
+| Orquestração | Lambda Durable Function (`ctx.wait_for_callback`, `ctx.step`) |
 | Banco | DynamoDB (uma tabela, on-demand) |
 | Frontend | Vite + React, hospedado no S3 + CloudFront |
 | Infra | OpenTofu (`hashicorp/aws` ≥ 6.25, por causa de `durable_config`) |
+
+O prefixo padrão dos recursos é `arena-rust` para não colidir com o stack Go (`arena-store`).
 
 ## Fluxo da loja
 
@@ -62,15 +66,15 @@ Stack:
 
 ## Rodar local (sem AWS)
 
-Requisitos: Go 1.24+ (o `go.mod` deste checkout está em 1.26), Node 20+.
+Requisitos: Rust 1.94+ (`cargo-lambda` só é necessário para o zip de deploy), Node 20+.
 
 ```bash
-make test          # testes do workflow durable, estoque, PIX e API
-make local         # API em 127.0.0.1:8080 (memória + durabletest)
+make test          # testes do workflow durable, estoque e PIX
+make local         # API em 127.0.0.1:8080 (memória + LocalRunner)
 make frontend-dev  # Vite em 5173, proxy /api → 8080
 ```
 
-O modo local usa o runner oficial `durabletest` (o mesmo das unit tests) e um relógio de parede para expirar carrinho/PIX. Timeouts:
+O modo local usa o `LocalRunner` oficial do SDK (o mesmo das unit tests) e um relógio de parede para expirar carrinho/PIX. Timeouts:
 
 ```bash
 CART_TTL_SECONDS=60 PIX_TTL_SECONDS=45 CARD_DELAY_SECONDS=2 make local
@@ -93,23 +97,22 @@ Para TTLs curtos na AWS (teste de expiração sem esperar 15 min), copie `infra/
 
 ## Testes
 
-Os testes **não** chamam a AWS. O pacote `durabletest` replica o loop de replay da Lambda:
+Os testes **não** chamam a AWS. O `LocalRunner` do SDK replica o loop de replay da Lambda:
 
 - PIX pago → `reserved` vira `sold`
 - PIX expirado → estoque restaurado
 - Carrinho expirado → estoque restaurado
 - Cartão aprovado / recusado
-- API HTTP: visitante → item → checkout PIX → confirmar / expirar
 
 ```bash
-cd backend && go test ./...
+cd backend && cargo test
 ```
 
 ## Segurança (auditoria do que entra no GitHub público)
 
 Este repo é um **sandbox**. Mesmo assim:
 
-- `.gitignore` cobre `.env`, `*.tfvars`, `*.tfstate`, zips, `bootstrap`, credenciais.
+- `.gitignore` cobre `.env`, `*.tfvars`, `*.tfstate`, zips, `bootstrap`, `target/`, credenciais.
 - Nenhum secret hardcoded. Cartão de teste é dado público de demo, igual a um sandbox de gateway.
 - PAN do cartão **não é persistido**. Só os últimos 4 dígitos depois da aprovação.
 - Callback IDs das durable executions não vão para o JSON do frontend.
@@ -123,7 +126,7 @@ O que **não** fazer: commitar `infra/terraform.tfstate`, colar `AWS_SECRET_ACCE
 ## Layout
 
 ```
-backend/          # módulo Go (cmd/api, cmd/durable, internal/...)
+backend/          # crate Rust (bins api + durable)
 frontend/         # Vite + React
 infra/            # OpenTofu
 docs/instructions.md
@@ -131,4 +134,4 @@ docs/instructions.md
 
 ## Próximo passo (depois do deploy)
 
-Simular dois navegadores: um paga no PIX a tempo, outro deixa expirar, um terceiro usa o cartão de teste com atraso. Conferir estoque na tela do produto (`disponíveis` / `reservados` / `vendidos`) e a linha do tempo do pedido — cada evento veio de um `durable.Step` ou de um callback retomado.
+Simular dois navegadores: um paga no PIX a tempo, outro deixa expirar, um terceiro usa o cartão de teste com atraso. Conferir estoque na tela do produto (`disponíveis` / `reservados` / `vendidos`) e a linha do tempo do pedido — cada evento veio de um `ctx.step` ou de um callback retomado.
